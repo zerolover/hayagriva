@@ -13,7 +13,7 @@ keywords = ["bibliography", "citation", "reference", "bibtex", "literature"]
 [features]
 default = ["biblatex", "archive"]
 cli = ["clap", "strum"]
-archive = ["ciborium"]
+archive = ["ciborium", "zune-inflate"]
 csl-json = ["citationberg/json"]
 
 [dependencies]
@@ -32,6 +32,7 @@ biblatex = { version = "0.12.0", features = ["unic-langid"], optional = true }
 ciborium = { version = "0.2.1", optional = true }
 clap = { version = "4", optional = true, features = ["cargo"] }
 strum = { version = "0.26", features = ["derive"], optional = true }
+zune-inflate = { version = "0.2.54", optional = true, default-features = false, features = ["zlib"] }
 icu_collator = "2.2.0"
 icu_locale = "2.2.0"
 
@@ -44,7 +45,19 @@ regex = "1"
 name = "hayagriva"
 required-features = ["cli"]
 
+[[bin]]
+name = "hayagriva_lite"
+path = "src/bin/main2.rs"
+required-features = ["biblatex", "archive"]
+
 [[test]]
 name = "citeproc"
 path = "tests/citeproc.rs"
 required-features = ["csl-json"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

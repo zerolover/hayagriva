@@ -528,8 +528,7 @@ impl fmt::Display for ArchivalError {
 }
 
 /// IDs of CSL styles requested for archive inclusion.
-const STYLE_IDS: [&str; 82] = [
-    "http://typst.org/csl/alphanumeric",
+const STYLE_IDS: [&str; 81] = [
     "http://www.zotero.org/styles/american-anthropological-association",
     "http://www.zotero.org/styles/american-chemical-society",
     "http://www.zotero.org/styles/american-geophysical-union",
