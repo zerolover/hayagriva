@@ -124,7 +124,7 @@ fn missing_argument(flag: &str) -> String {
 }
 
 fn usage() -> &'static str {
-    "usage: cargo run --bin hayagriva_lite -- --bib <file.bib> [--style <style-name>] [--locale <locale>] [--plain] --cite <file.txt>"
+    "usage: hayagriva_lite --bib <file.bib> [--style <style-name>] [--locale <locale>] [--plain] --cite <file.txt>"
 }
 
 fn print_usage() {
@@ -133,8 +133,10 @@ fn print_usage() {
     println!("  --style   use an embedded CSL style, for example `apa` or `ieee`");
     println!("            if omitted, iterate all embedded styles");
     println!("  --locale  use an embedded locale such as `en-US` or `zh-CN`");
+    println!("            if omitted, use the style's default locale");
     println!("  --plain   emit plain text instead of ANSI/VT100 terminal formatting");
     println!("  --cite    read citation groups from a text file, one group per line");
+    println!("            supports comma- or whitespace-separated citation keys");
 }
 
 fn read_bibliography(path: &str) -> Result<hayagriva::Library, String> {
