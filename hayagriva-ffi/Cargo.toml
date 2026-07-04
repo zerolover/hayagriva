@@ -1,0 +1,21 @@
+[package]
+name = "hayagriva-ffi"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "hayagriva_ffi"
+crate-type = ["cdylib"]
+
+[dependencies]
+hayagriva = { path = "..", features = ["biblatex", "archive"] }
+citationberg = "0.7.0"
+miniserde = "0.1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
