@@ -66,17 +66,38 @@ impl RenderCsl for citationberg::Text {
             }
         }
 
-        // Check if a URL prefix exists for the target and if so, if the CSL specifies
-        // the URL prefix as the affix. If this is the case, we want to make sure the
-        // URL prefix is a part of the link (and therefore not printed here, but later).
-        let affix_is_url_prefix = match &target {
+        fn is_absolute_url(value: &str) -> bool {
+            value.starts_with("https://") || value.starts_with("http://")
+        }
+
+        // Check if a URL prefix exists for the target and if so, whether the CSL
+        // prefix ends with it, such as `https://doi.org/` or `. https://doi.org/`.
+        // In that case, treat the URL prefix as part of the link and only print the
+        // preceding affix fragment up front.
+        let affix_url_prefix = match &target {
             ResolvedTextTarget::StandardVariable(var, _) => get_url_prefix(*var)
-                .is_some_and(|prefix| self.affixes.prefix.as_deref() == Some(prefix)),
-            _ => false,
+                .and_then(|prefix| {
+                    self.affixes
+                        .prefix
+                        .as_deref()
+                        .filter(|affix| affix.ends_with(prefix))
+                        .map(|affix| (prefix, affix))
+                }),
+            _ => None,
         };
 
-        let affix_loc = (print_affixes && !affix_is_url_prefix)
-            .then(|| ctx.apply_prefix(&self.affixes));
+        let affix_loc = if print_affixes {
+            if let Some((prefix, affix)) = affix_url_prefix {
+                let mut trimmed_affixes = self.affixes.clone();
+                trimmed_affixes.prefix =
+                    affix.strip_suffix(prefix).and_then(|s| (!s.is_empty()).then(|| s.to_string()));
+                Some(ctx.apply_prefix(&trimmed_affixes))
+            } else {
+                Some(ctx.apply_prefix(&self.affixes))
+            }
+        } else {
+            None
+        };
 
         if self.quotes {
             ctx.push_quotes();
@@ -90,12 +111,17 @@ impl RenderCsl for citationberg::Text {
         match target {
             ResolvedTextTarget::StandardVariable(var, val) => {
                 if let Some(url_prefix) = get_url_prefix(var) {
+                    let rendered_val = val.to_str();
                     // For link variables, create the full URL for the destination of the link.
-                    let full_url = format!("{}{}", url_prefix, val);
+                    let full_url = if is_absolute_url(rendered_val.as_ref()) {
+                        rendered_val.to_string()
+                    } else {
+                        format!("{}{}", url_prefix, rendered_val)
+                    };
 
-                    let (display, destination) = if affix_is_url_prefix {
-                        // If the affix in the CSL was the URL prefix, then use
-                        // the full URL as both the link displayed and its destination.
+                    let (display, destination) = if affix_url_prefix.is_some() {
+                        // If the CSL prefix already contributes the URL prefix, make the
+                        // rendered link text be the full URL exactly once.
                         (full_url.clone(), full_url)
                     } else {
                         // Otherwise, display the value (e.g. the DOI) with the full URL
@@ -792,7 +818,9 @@ impl RenderCsl for citationberg::Date {
         if !self.will_render(ctx, variable.into()) {
             (false, UsageInfo::default())
         } else {
-            let has_non_empty_vars = ctx.resolve_date_variable(variable).is_some();
+            let has_non_empty_vars = ctx
+                .resolve_date_variable(variable)
+                .is_some_and(|date| date_element_will_render(self, ctx, &date));
             (
                 has_non_empty_vars,
                 UsageInfo {
@@ -935,6 +963,36 @@ fn render_date_part<T: EntryLike>(
     ctx.stop_stripping_periods();
     ctx.pop_case(cidx);
     ctx.pop_format(idx);
+}
+
+fn date_element_will_render<T: EntryLike>(
+    date: &citationberg::Date,
+    ctx: &Context<T>,
+    value: &Date,
+) -> bool {
+    let base = if let Some(form) = date.form {
+        ctx.localized_date(form)
+    } else {
+        None
+    };
+
+    let parts = date.parts.or(base.and_then(|b| b.parts)).unwrap_or_default();
+
+    base.unwrap_or(date).date_part.iter().any(|part| {
+        match part.name {
+            DatePartName::Month if !parts.has_month() && value.season.is_none() => false,
+            DatePartName::Day if !parts.has_day() => false,
+            _ => date_part_will_render(part, value),
+        }
+    })
+}
+
+fn date_part_will_render(date_part: &citationberg::DatePart, date: &Date) -> bool {
+    match date_part.name {
+        DatePartName::Year => true,
+        DatePartName::Month => date.month.is_some() || date.season.is_some(),
+        DatePartName::Day => date.day.is_some(),
+    }
 }
 
 /// Render the year suffix if it is set and the style will not render it

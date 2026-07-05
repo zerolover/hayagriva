@@ -284,16 +284,40 @@ impl EntryLike for Entry {
                 .and_then(|e| e.title())
                 .map(|f| f.select(form))
                 .map(Cow::Borrowed),
-            StandardVariable::ContainerTitle => entry
-                .get_container()
-                .and_then(|e| e.title())
-                .map(|f| f.select(form))
-                .map(Cow::Borrowed),
-            StandardVariable::ContainerTitleShort => entry
-                .get_container()
-                .and_then(|e| e.title())
-                .map(|f| f.select(LongShortForm::Short))
-                .map(Cow::Borrowed),
+            StandardVariable::ContainerTitle => {
+                if let Some(container) = entry.get_container()
+                    && let Some(title) = container.title()
+                    && title
+                        .select(form)
+                        .to_string()
+                        .to_ascii_lowercase()
+                        .contains("arxiv")
+                {
+                    Some(Cow::Owned(StringChunk::verbatim("arXiv").into()))
+                } else {
+                    entry.get_container()
+                        .and_then(|e| e.title())
+                        .map(|f| f.select(form))
+                        .map(Cow::Borrowed)
+                }
+            }
+            StandardVariable::ContainerTitleShort => {
+                if let Some(container) = entry.get_container()
+                    && let Some(title) = container.title()
+                    && title
+                        .select(LongShortForm::Short)
+                        .to_string()
+                        .to_ascii_lowercase()
+                        .contains("arxiv")
+                {
+                    Some(Cow::Owned(StringChunk::verbatim("arXiv").into()))
+                } else {
+                    entry.get_container()
+                        .and_then(|e| e.title())
+                        .map(|f| f.select(LongShortForm::Short))
+                        .map(Cow::Borrowed)
+                }
+            }
             StandardVariable::Dimensions => entry
                 .runtime()
                 .map(|r| Cow::Owned(StringChunk::normal(r.to_string()).into())),
@@ -405,10 +429,26 @@ impl EntryLike for Entry {
                     (Article > ("p":Proceedings))
                 );
 
-                self.bound_select(&selector, "p")
-                    .and_then(Entry::title)
-                    .map(|f| f.select(form))
-                    .map(Cow::Borrowed)
+                let volume_parent = self.bound_select(&selector, "p");
+                let container = self.get_container();
+
+                let duplicate_container_title = match (volume_parent, container) {
+                    (Some(v), Some(c)) if std::ptr::eq(v, c) => true,
+                    (Some(v), Some(c)) => {
+                        v.title().map(|t| t.select(form).to_string())
+                            == c.title().map(|t| t.select(form).to_string())
+                    }
+                    _ => false,
+                };
+
+                if duplicate_container_title {
+                    None
+                } else {
+                    volume_parent
+                        .and_then(Entry::title)
+                        .map(|f| f.select(form))
+                        .map(Cow::Borrowed)
+                }
             }
             StandardVariable::YearSuffix => panic!("processor must resolve this"),
         }
@@ -694,7 +734,7 @@ impl EntryLike for Entry {
                     .matches(self)
                     && !(is_blogpost || is_post)
             }
-            Kind::Dataset => false,
+            Kind::Dataset => self.entry_type() == &EntryType::Repository,
             Kind::Figure | Kind::Graphic | Kind::Map => {
                 let is_figure = select!(Artwork > Article).matches(self);
                 if kind == Kind::Figure {
