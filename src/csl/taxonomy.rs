@@ -93,6 +93,16 @@ impl<'a, T: EntryLike> InstanceContext<'a, T> {
         variable: StandardVariable,
     ) -> Option<Cow<'a, ChunkedString>> {
         match variable {
+            StandardVariable::CitationLabel => {
+                let mut label = self.entry.resolve_standard_variable(form, variable)?.to_string();
+                if let DisambiguateState::YearSuffix(s) =
+                    self.cite_props.speculative.disambiguation
+                {
+                    label.push_str(&letter(s));
+                }
+
+                Some(Cow::Owned(StringChunk::verbatim(label).into()))
+            }
             StandardVariable::YearSuffix => {
                 if let DisambiguateState::YearSuffix(s) =
                     self.cite_props.speculative.disambiguation
@@ -750,7 +760,7 @@ impl EntryLike for Entry {
             Kind::Pamphlet => false,
             Kind::PersonalCommunication => false,
             Kind::Review | Kind::ReviewBook => false,
-            Kind::Software => self.entry_type() == &EntryType::Repository,
+            Kind::Software => false,
             Kind::Document => self.entry_type() == &EntryType::Misc,
         }
     }

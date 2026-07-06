@@ -5,7 +5,8 @@
 
 use std::sync::OnceLock;
 
-use citationberg::{Locale, Style};
+use citationberg::taxonomy::Kind;
+use citationberg::{LayoutRenderingElement, Locale, Style, TextTarget};
 use serde::de::DeserializeOwned;
 
 macro_rules! archived_style_bytes {
@@ -196,7 +197,9 @@ impl ArchivedStyle {
 
     /// Retrieve the style.
     pub fn get(self) -> Style {
-        from_cbor(self.bytes()).unwrap()
+        let mut style = from_cbor(self.bytes()).unwrap();
+        patch_style(self, &mut style);
+        style
     }
 
     /// Get the style's names in Hayagriva.
@@ -338,6 +341,138 @@ fn from_cbor<T: DeserializeOwned>(reader: &[u8]) -> Result<T, String> {
     let bytes = decode_archive_bytes(reader)?;
     ciborium::de::from_reader(bytes.as_slice())
         .map_err(|err| format!("failed to decode embedded archive entry: {err}"))
+}
+
+fn patch_style(archived: ArchivedStyle, style: &mut Style) {
+    let Style::Independent(style) = style else {
+        return;
+    };
+
+    match archived {
+        ArchivedStyle::ElsevierHarvard => {
+            let Some(bibliography) = style.bibliography.as_mut() else {
+                return;
+            };
+
+            for element in &mut bibliography.layout.elements {
+                let LayoutRenderingElement::Text(text) = element else {
+                    continue;
+                };
+
+                if matches!(&text.target, TextTarget::Macro { name } if name == "access")
+                    && text.affixes.prefix.as_deref() == Some(". ")
+                {
+                    text.affixes.prefix = Some(" ".to_string());
+                }
+            }
+        }
+        ArchivedStyle::SpringerVancouver => {
+            if let Some(date_macro) = style.macros.iter_mut().find(|m| m.name == "date") {
+                remove_macro_text(&mut date_macro.children, "accessed-date");
+                clear_group_suffix_for_types(
+                    &mut date_macro.children,
+                    &[Kind::ArticleJournal, Kind::ArticleMagazine, Kind::ArticleNewspaper],
+                    ";",
+                );
+            }
+            if let Some(journal_location) =
+                style.macros.iter_mut().find(|m| m.name == "journal-location")
+            {
+                prefix_text_variable(&mut journal_location.children, ";");
+            }
+        }
+        _ => {}
+    }
+}
+
+fn remove_macro_text(elements: &mut Vec<LayoutRenderingElement>, macro_name: &str) {
+    elements.retain(|element| {
+        !matches!(
+            element,
+            LayoutRenderingElement::Text(text)
+                if matches!(&text.target, TextTarget::Macro { name } if name == macro_name)
+        )
+    });
+
+    for element in elements {
+        match element {
+            LayoutRenderingElement::Group(group) => {
+                remove_macro_text(&mut group.children, macro_name);
+            }
+            LayoutRenderingElement::Choose(choose) => {
+                remove_macro_text(&mut choose.if_.children, macro_name);
+                for branch in &mut choose.else_if {
+                    remove_macro_text(&mut branch.children, macro_name);
+                }
+                if let Some(otherwise) = &mut choose.otherwise {
+                    remove_macro_text(&mut otherwise.children, macro_name);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn clear_group_suffix_for_types(
+    elements: &mut [LayoutRenderingElement],
+    types: &[Kind],
+    suffix: &str,
+) {
+    for element in elements {
+        match element {
+            LayoutRenderingElement::Choose(choose) => {
+                for branch in std::iter::once(&mut choose.if_).chain(choose.else_if.iter_mut()) {
+                    if branch
+                        .type_
+                        .as_ref()
+                        .is_some_and(|branch_types| branch_types.iter().any(|t| types.contains(t)))
+                    {
+                        for child in &mut branch.children {
+                            if let LayoutRenderingElement::Group(group) = child
+                                && group.suffix.as_deref() == Some(suffix)
+                            {
+                                group.suffix = None;
+                            }
+                        }
+                    }
+                    clear_group_suffix_for_types(&mut branch.children, types, suffix);
+                }
+
+                if let Some(otherwise) = &mut choose.otherwise {
+                    clear_group_suffix_for_types(&mut otherwise.children, types, suffix);
+                }
+            }
+            LayoutRenderingElement::Group(group) => {
+                clear_group_suffix_for_types(&mut group.children, types, suffix);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn prefix_text_variable(elements: &mut [LayoutRenderingElement], prefix: &str) {
+    for element in elements {
+        match element {
+            LayoutRenderingElement::Text(text)
+                if matches!(&text.target, TextTarget::Variable { .. }) =>
+            {
+                text.affixes.prefix = Some(prefix.to_string());
+            }
+            LayoutRenderingElement::Group(group) => {
+                prefix_text_variable(&mut group.children, prefix);
+            }
+            LayoutRenderingElement::Choose(choose) => {
+                prefix_text_variable(&mut choose.if_.children, prefix);
+                for branch in &mut choose.else_if {
+                    prefix_text_variable(&mut branch.children, prefix);
+                }
+                if let Some(otherwise) = &mut choose.otherwise {
+                    prefix_text_variable(&mut otherwise.children, prefix);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// CBOR-encoded CSL locales.

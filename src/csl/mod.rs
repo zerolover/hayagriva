@@ -1031,7 +1031,7 @@ fn disambiguate_year_suffix<F, T>(
     T: EntryLike + PartialEq,
     F: FnMut(&T, DisambiguateState),
 {
-    if renders.iter().flat_map(|r| r.items.iter()).any(|i| {
+    let renders_year_or_label = renders.iter().flat_map(|r| r.items.iter()).any(|i| {
         let entry_has_date = i
             .entry
             .resolve_date_variable(DateVariable::Issued)
@@ -1049,8 +1049,18 @@ fn disambiguate_year_suffix<F, T>(
                     || (entry_has_date && e.meta == Some(ElemMeta::CitationLabel))
             })
             .is_some()
-    }) && group.iter().any(|&(cite_idx, item_idx)| {
-        renders[cite_idx].request.style.citation.disambiguate_add_year_suffix
+    });
+
+    let renders_citation_label = group.iter().any(|&(cite_idx, item_idx)| {
+        renders[cite_idx].items[item_idx]
+            .rendered
+            .find_elem_by(&|e| e.meta == Some(ElemMeta::CitationLabel))
+            .is_some()
+    });
+
+    if renders_year_or_label && group.iter().any(|&(cite_idx, item_idx)| {
+        (renders[cite_idx].request.style.citation.disambiguate_add_year_suffix
+            || renders_citation_label)
             && renders[cite_idx].items[item_idx]
                 .cite_props
                 .speculative
