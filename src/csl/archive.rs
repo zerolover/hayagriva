@@ -5,7 +5,7 @@
 
 use std::sync::OnceLock;
 
-use citationberg::taxonomy::Kind;
+use citationberg::taxonomy::{Kind, StandardVariable, Variable};
 use citationberg::{LayoutRenderingElement, Locale, Style, TextTarget};
 use serde::de::DeserializeOwned;
 
@@ -344,6 +344,13 @@ fn patch_style(archived: ArchivedStyle, style: &mut Style) {
                 }
             }
         }
+        ArchivedStyle::ElsevierVancouver => {
+            let Some(bibliography) = style.bibliography.as_mut() else {
+                return;
+            };
+
+            patch_elsevier_vancouver_conference_layout(&mut bibliography.layout.elements);
+        }
         ArchivedStyle::SpringerVancouver => {
             if let Some(date_macro) = style.macros.iter_mut().find(|m| m.name == "date") {
                 remove_macro_text(&mut date_macro.children, "accessed-date");
@@ -360,6 +367,129 @@ fn patch_style(archived: ArchivedStyle, style: &mut Style) {
             }
         }
         _ => {}
+    }
+}
+
+fn patch_elsevier_vancouver_conference_layout(
+    elements: &mut [LayoutRenderingElement],
+) {
+    for element in elements {
+        match element {
+            LayoutRenderingElement::Choose(choose) => {
+                for branch in &mut choose.else_if {
+                    if branch
+                        .type_
+                        .as_ref()
+                        .is_some_and(|types| {
+                            types.contains(&Kind::Chapter)
+                                && types.contains(&Kind::PaperConference)
+                        })
+                    {
+                        patch_elsevier_vancouver_conference_children(&mut branch.children);
+                    }
+
+                    patch_elsevier_vancouver_conference_layout(&mut branch.children);
+                }
+
+                patch_elsevier_vancouver_conference_layout(&mut choose.if_.children);
+                if let Some(otherwise) = &mut choose.otherwise {
+                    patch_elsevier_vancouver_conference_layout(&mut otherwise.children);
+                }
+            }
+            LayoutRenderingElement::Group(group) => {
+                patch_elsevier_vancouver_conference_layout(&mut group.children);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn patch_elsevier_vancouver_conference_children(
+    elements: &mut Vec<LayoutRenderingElement>,
+) {
+    let mut i = 0;
+    while i + 1 < elements.len() {
+        let should_merge = match (&elements[i], &elements[i + 1]) {
+            (LayoutRenderingElement::Group(first), LayoutRenderingElement::Group(second)) => {
+                is_in_editor_group(first) && contains_container_title(second)
+            }
+            _ => false,
+        };
+
+        if should_merge {
+            let LayoutRenderingElement::Group(second) = elements.remove(i + 1) else {
+                unreachable!();
+            };
+            let LayoutRenderingElement::Group(first) = &mut elements[i] else {
+                unreachable!();
+            };
+
+            if let Some(LayoutRenderingElement::Text(term)) = first.children.first_mut() {
+                term.affixes.suffix = Some(":".to_string());
+            }
+
+            first.delimiter = Some(" ".to_string());
+            first.children.push(LayoutRenderingElement::Group(second));
+        }
+
+        i += 1;
+    }
+
+    for child in elements {
+        match child {
+            LayoutRenderingElement::Group(group) => {
+                patch_elsevier_vancouver_conference_children(&mut group.children);
+            }
+            LayoutRenderingElement::Choose(choose) => {
+                patch_elsevier_vancouver_conference_layout(&mut choose.if_.children);
+                for branch in &mut choose.else_if {
+                    patch_elsevier_vancouver_conference_layout(&mut branch.children);
+                }
+                if let Some(otherwise) = &mut choose.otherwise {
+                    patch_elsevier_vancouver_conference_layout(&mut otherwise.children);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn is_in_editor_group(group: &citationberg::Group) -> bool {
+    matches!(
+        group.children.as_slice(),
+        [
+            LayoutRenderingElement::Text(text),
+            LayoutRenderingElement::Text(macro_text),
+        ] if text.affixes.suffix.as_deref() == Some(": ")
+            && matches!(&macro_text.target, TextTarget::Macro { name } if name == "editor")
+    )
+}
+
+fn contains_container_title(group: &citationberg::Group) -> bool {
+    group.children.iter().any(element_contains_container_title)
+}
+
+fn element_contains_container_title(element: &LayoutRenderingElement) -> bool {
+    match element {
+        LayoutRenderingElement::Text(text) => matches!(
+            text.target,
+            TextTarget::Variable {
+                var: Variable::Standard(StandardVariable::ContainerTitle),
+                ..
+            }
+        ),
+        LayoutRenderingElement::Group(group) => contains_container_title(group),
+        LayoutRenderingElement::Choose(choose) => {
+            choose.if_.children.iter().any(element_contains_container_title)
+                || choose
+                    .else_if
+                    .iter()
+                    .any(|branch| branch.children.iter().any(element_contains_container_title))
+                || choose.otherwise.as_ref().is_some_and(|otherwise| {
+                    otherwise.children.iter().any(element_contains_container_title)
+                })
+        }
+        _ => false,
     }
 }
 
