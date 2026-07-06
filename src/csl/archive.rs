@@ -67,10 +67,6 @@ pub enum ArchivedStyle {
     ModernLanguageAssociation,
     /// Nature.
     Nature,
-    /// NLM/Vancouver: Citing Medicine 2nd edition (citation-sequence).
-    NlmCitationSequence,
-    /// NLM/Vancouver: Citing Medicine 2nd edition (citation-sequence, superscript).
-    NlmCitationSequenceSuperscript,
     /// Springer - Basic (numeric, brackets).
     SpringerBasic,
     /// Springer - Basic (author-date).
@@ -101,8 +97,6 @@ impl ArchivedStyle {
             "ieee" => Some(Self::InstituteOfElectricalAndElectronicsEngineers),
             "mla" => Some(Self::ModernLanguageAssociation),
             "nature" => Some(Self::Nature),
-            "vancouver" => Some(Self::NlmCitationSequence),
-            "vancouver-superscript" => Some(Self::NlmCitationSequenceSuperscript),
             "springer-basic" => Some(Self::SpringerBasic),
             "springer-basic-author-date" => Some(Self::SpringerBasicAuthorDate),
             "springer-vancouver" => Some(Self::SpringerVancouver),
@@ -130,8 +124,6 @@ impl ArchivedStyle {
             "http://www.zotero.org/styles/ieee" => Some(Self::InstituteOfElectricalAndElectronicsEngineers),
             "http://www.zotero.org/styles/modern-language-association" => Some(Self::ModernLanguageAssociation),
             "http://www.zotero.org/styles/nature" => Some(Self::Nature),
-            "http://www.zotero.org/styles/nlm-citation-sequence" => Some(Self::NlmCitationSequence),
-            "http://www.zotero.org/styles/nlm-citation-sequence-superscript" => Some(Self::NlmCitationSequenceSuperscript),
             "http://www.zotero.org/styles/springer-basic-brackets" => Some(Self::SpringerBasic),
             "http://www.zotero.org/styles/springer-basic-author-date" => Some(Self::SpringerBasicAuthorDate),
             "http://www.zotero.org/styles/springer-vancouver-brackets" => Some(Self::SpringerVancouver),
@@ -159,8 +151,6 @@ impl ArchivedStyle {
             Self::InstituteOfElectricalAndElectronicsEngineers,
             Self::ModernLanguageAssociation,
             Self::Nature,
-            Self::NlmCitationSequence,
-            Self::NlmCitationSequenceSuperscript,
             Self::SpringerBasic,
             Self::SpringerBasicAuthorDate,
             Self::SpringerVancouver,
@@ -187,8 +177,6 @@ impl ArchivedStyle {
             Self::InstituteOfElectricalAndElectronicsEngineers => archived_style_bytes!("ieee"),
             Self::ModernLanguageAssociation => archived_style_bytes!("modern-language-association"),
             Self::Nature => archived_style_bytes!("nature"),
-            Self::NlmCitationSequence => archived_style_bytes!("nlm-citation-sequence"),
-            Self::NlmCitationSequenceSuperscript => archived_style_bytes!("nlm-citation-sequence-superscript"),
             Self::SpringerBasic => archived_style_bytes!("springer-basic-brackets"),
             Self::SpringerBasicAuthorDate => archived_style_bytes!("springer-basic-author-date"),
             Self::SpringerVancouver => archived_style_bytes!("springer-vancouver-brackets"),
@@ -256,12 +244,6 @@ impl ArchivedStyle {
             Self::Nature => &[
                 "nature",
             ],
-            Self::NlmCitationSequence => &[
-                "vancouver",
-            ],
-            Self::NlmCitationSequenceSuperscript => &[
-                "vancouver-superscript",
-            ],
             Self::SpringerBasic => &[
                 "springer-basic",
             ],
@@ -294,8 +276,6 @@ impl ArchivedStyle {
             Self::InstituteOfElectricalAndElectronicsEngineers => "IEEE Reference Guide version 11.29.2023",
             Self::ModernLanguageAssociation => "MLA Handbook 9th edition (in-text citations)",
             Self::Nature => "Nature",
-            Self::NlmCitationSequence => "NLM/Vancouver: Citing Medicine 2nd edition (citation-sequence)",
-            Self::NlmCitationSequenceSuperscript => "NLM/Vancouver: Citing Medicine 2nd edition (citation-sequence, superscript)",
             Self::SpringerBasic => "Springer - Basic (numeric, brackets)",
             Self::SpringerBasicAuthorDate => "Springer - Basic (author-date)",
             Self::SpringerVancouver => "Springer - NLM/Vancouver (citation-sequence, brackets)",
@@ -322,8 +302,6 @@ impl ArchivedStyle {
             Self::InstituteOfElectricalAndElectronicsEngineers => "http://www.zotero.org/styles/ieee",
             Self::ModernLanguageAssociation => "http://www.zotero.org/styles/modern-language-association",
             Self::Nature => "http://www.zotero.org/styles/nature",
-            Self::NlmCitationSequence => "http://www.zotero.org/styles/nlm-citation-sequence",
-            Self::NlmCitationSequenceSuperscript => "http://www.zotero.org/styles/nlm-citation-sequence-superscript",
             Self::SpringerBasic => "http://www.zotero.org/styles/springer-basic-brackets",
             Self::SpringerBasicAuthorDate => "http://www.zotero.org/styles/springer-basic-author-date",
             Self::SpringerVancouver => "http://www.zotero.org/styles/springer-vancouver-brackets",
