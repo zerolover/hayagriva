@@ -1013,17 +1013,10 @@ fn disambiguate_with_choose<F, T>(
                 .disambiguation
                 .may_disambiguate_with_choose()
     }) {
-        // Do not set this for the first qualifying entry.
-        let mut armed = false;
-
         for &(cite_idx, item_idx) in group.iter() {
             let item = &renders[cite_idx].items[item_idx];
             if item.checked_disambiguate {
-                if armed {
-                    mark(item.entry, DisambiguateState::Choose);
-                } else {
-                    armed = true;
-                }
+                mark(item.entry, DisambiguateState::Choose);
             }
         }
     }
