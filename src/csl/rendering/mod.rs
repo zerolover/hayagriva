@@ -780,7 +780,7 @@ impl RenderCsl for citationberg::Date {
                 .then(|| self.date_part.iter().find(|p| p.name == part.name))
                 .flatten();
 
-            render_date_part(part, &date, ctx, over_ride, first);
+            render_date_part(part, &date, ctx, over_ride, first, last_was_empty);
             last_was_empty = cursor == ctx.writing.len();
         }
 
@@ -838,7 +838,8 @@ fn render_date_part<T: EntryLike>(
     date: &Date,
     ctx: &mut Context<T>,
     over_ride: Option<&citationberg::DatePart>,
-    first: bool,
+    first_date: bool,
+    first_part: bool,
 ) {
     let Some(val) = (match date_part.name {
         DatePartName::Day => date.day.map(|i| i as i32 + 1),
@@ -865,7 +866,23 @@ fn render_date_part<T: EntryLike>(
     let idx = ctx.push_format(formatting);
 
     let affixes = &date_part.affixes;
-    let affix_loc = (!is_only_suffix).then(|| ctx.apply_prefix(affixes));
+    let suppress_first_part_prefix = first_part
+        && date_part.name == DatePartName::Year
+        && date.month.is_none()
+        && date.season.is_none()
+        && ctx
+            .instance
+            .entry
+            .matches_entry_type(citationberg::taxonomy::Kind::PaperConference);
+    let affix_loc = if is_only_suffix {
+        None
+    } else if suppress_first_part_prefix {
+        let mut trimmed_affixes = affixes.clone();
+        trimmed_affixes.prefix = None;
+        Some(ctx.apply_prefix(&trimmed_affixes))
+    } else {
+        Some(ctx.apply_prefix(affixes))
+    };
     if date_part.name == DatePartName::Month {
         ctx.may_strip_periods(date_part.strip_periods);
     }
@@ -952,7 +969,7 @@ fn render_date_part<T: EntryLike>(
     }
 
     if let DateStrongAnyForm::Year(_) = form
-        && first
+        && first_date
     {
         render_year_suffix_implicitly(ctx);
     }
