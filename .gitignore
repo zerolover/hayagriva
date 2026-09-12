@@ -5,9 +5,14 @@
 /_studies
 
 # Rust
+/dist
 /target
 /main/target
+/hayagriva-ffi/target
 **/*.rs.bk
+
+# CMake
+examples/cpp/build
 
 # macOS
 .DS_Store

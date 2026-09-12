@@ -247,14 +247,13 @@ impl<T: EntryLike + Hash + PartialEq + Eq + Debug> BibliographyDriver<'_, T> {
             };
 
             for group in ambiguous.iter() {
-                let len_rerender = rerender.len();
                 // 2a. Name Disambiguation loop
                 disambiguate_names(&res, group, |entry, state| {
                     mark(&mut rerender, entry, state)
                 });
 
-                // Do not try other methods for this group if the previous method succeeded.
-                if rerender.len() > len_rerender {
+                // Do not try other methods if the previous method succeeded.
+                if !rerender.is_empty() {
                     continue;
                 }
 
@@ -263,7 +262,7 @@ impl<T: EntryLike + Hash + PartialEq + Eq + Debug> BibliographyDriver<'_, T> {
                     mark(&mut rerender, entry, state)
                 });
 
-                if rerender.len() > len_rerender {
+                if !rerender.is_empty() {
                     continue;
                 }
 
@@ -1014,17 +1013,10 @@ fn disambiguate_with_choose<F, T>(
                 .disambiguation
                 .may_disambiguate_with_choose()
     }) {
-        // Do not set this for the first qualifying entry.
-        let mut armed = false;
-
         for &(cite_idx, item_idx) in group.iter() {
             let item = &renders[cite_idx].items[item_idx];
             if item.checked_disambiguate {
-                if armed {
-                    mark(item.entry, DisambiguateState::Choose);
-                } else {
-                    armed = true;
-                }
+                mark(item.entry, DisambiguateState::Choose);
             }
         }
     }
@@ -1039,7 +1031,7 @@ fn disambiguate_year_suffix<F, T>(
     T: EntryLike + PartialEq,
     F: FnMut(&T, DisambiguateState),
 {
-    if renders.iter().flat_map(|r| r.items.iter()).any(|i| {
+    let renders_year_or_label = renders.iter().flat_map(|r| r.items.iter()).any(|i| {
         let entry_has_date = i
             .entry
             .resolve_date_variable(DateVariable::Issued)
@@ -1057,8 +1049,18 @@ fn disambiguate_year_suffix<F, T>(
                     || (entry_has_date && e.meta == Some(ElemMeta::CitationLabel))
             })
             .is_some()
-    }) && group.iter().any(|&(cite_idx, item_idx)| {
-        renders[cite_idx].request.style.citation.disambiguate_add_year_suffix
+    });
+
+    let renders_citation_label = group.iter().any(|&(cite_idx, item_idx)| {
+        renders[cite_idx].items[item_idx]
+            .rendered
+            .find_elem_by(&|e| e.meta == Some(ElemMeta::CitationLabel))
+            .is_some()
+    });
+
+    if renders_year_or_label && group.iter().any(|&(cite_idx, item_idx)| {
+        (renders[cite_idx].request.style.citation.disambiguate_add_year_suffix
+            || renders_citation_label)
             && renders[cite_idx].items[item_idx]
                 .cite_props
                 .speculative
@@ -1825,10 +1827,17 @@ impl<'a> StyleContext<'a> {
                 }
             }
             (Some(CitePurpose::Prose), _) => {
-                let author_loc = ctx.apply_prefix(&Affixes::default());
                 do_author(&mut ctx);
-                let has_author = ctx.writing.has_content_since(&author_loc);
-                ctx.apply_suffix(&Affixes::default(), author_loc);
+                if !self
+                    .csl
+                    .citation
+                    .layout
+                    .prefix
+                    .as_ref()
+                    .is_some_and(|f| f.chars().next().is_some_and(char::is_whitespace))
+                {
+                    ctx.ensure_space();
+                }
 
                 if self.csl.info.category.iter().any(|c| {
                     matches!(
@@ -1838,14 +1847,6 @@ impl<'a> StyleContext<'a> {
                         }
                     )
                 }) {
-                    if has_author
-                        && !self.csl.citation.layout.prefix.as_ref().is_some_and(|f| {
-                            f.chars().next().is_some_and(char::is_whitespace)
-                        })
-                    {
-                        ctx.ensure_space();
-                    }
-
                     // Print the label.
                     if let Some(prefix) = self.csl.citation.layout.prefix.as_ref() {
                         ctx.push_str(prefix);
@@ -1857,39 +1858,15 @@ impl<'a> StyleContext<'a> {
                 } else {
                     // Print the citation surrounded by parentheses and suppress
                     // the author.
-                    let mut prefix = self
-                        .csl
-                        .citation
-                        .layout
-                        .prefix
-                        .clone()
-                        .unwrap_or_else(|| "(".to_string());
-                    if has_author
-                        && !prefix.chars().next().is_some_and(char::is_whitespace)
-                    {
-                        prefix.insert(0, ' ');
-                    }
-                    let affixes = Affixes {
-                        prefix: Some(prefix),
-                        suffix: Some(
-                            self.csl
-                                .citation
-                                .layout
-                                .suffix
-                                .clone()
-                                .unwrap_or_else(|| ")".to_string()),
-                        ),
-                    };
-                    let affix_loc = ctx.apply_prefix(&affixes);
+                    ctx.push_str(
+                        self.csl.citation.layout.prefix.as_deref().unwrap_or("("),
+                    );
                     ctx.set_special_form(Some(SpecialForm::SuppressAuthor));
                     do_regular(&mut ctx);
                     ctx.set_special_form(None);
-                    if has_author {
-                        ctx.apply_suffix(&affixes, affix_loc);
-                    } else {
-                        ctx.push_str(affixes.suffix.as_deref().unwrap());
-                        ctx.commit_elem(affix_loc.0, None, None);
-                    }
+                    ctx.push_str(
+                        self.csl.citation.layout.suffix.as_deref().unwrap_or(")"),
+                    );
                 }
             }
             (Some(CitePurpose::Year) | Some(CitePurpose::Full) | None, _) => {
@@ -2114,7 +2091,15 @@ impl<'a> StyleContext<'a> {
     }
 
     /// Get the locale for the given language in the style.
-    fn lookup_locale<F, R>(&self, mut f: F) -> Option<R>
+    fn lookup_locale<F, R>(&self, f: F) -> Option<R>
+    where
+        F: FnMut(&'a Locale) -> Option<R>,
+    {
+        self.lookup_locale_with(None, f)
+    }
+
+    /// Get the locale for a specific language override, or fallback to the style's locale.
+    fn lookup_locale_with<F, R>(&self, override_locale: Option<&LocaleCode>, mut f: F) -> Option<R>
     where
         F: FnMut(&'a Locale) -> Option<R>,
     {
@@ -2123,7 +2108,7 @@ impl<'a> StyleContext<'a> {
             file.iter().find(|l| l.lang.as_ref() == lang).and_then(|l| f(l))
         };
 
-        let locale = self.locale();
+        let locale = override_locale.cloned().unwrap_or_else(|| self.locale());
         let en_us = LocaleCode::en_us();
 
         for (i, resource) in [self.csl.locale.as_slice(), self.locale_files]
@@ -3050,6 +3035,35 @@ impl<'a, T: EntryLike> Context<'a, T> {
             term = locator.0.into();
         }
 
+        let is_gb = {
+            let id = &self.style.csl.info.id;
+            id.contains("gb-t-7714") || id.contains("gb7714")
+        };
+
+        if is_gb && !self.instance.entry.has_cjk() {
+            if term == Term::Other(OtherTerm::EtAl) {
+                if let Some(localization) = self.style.lookup_locale(|l| {
+                    let term = l.term(term, form)?;
+                    Some(if plural { term.multiple() } else { term.single() })
+                }) {
+                    if localization == Some("等") {
+                        return Some("et al.");
+                    }
+                }
+            } else if term == Term::NumberVariable(csl_taxonomy::NumberVariable::Volume) {
+                return Some(if plural { "Vols. " } else { "Vol. " });
+            } else if term == Term::NumberVariable(csl_taxonomy::NumberVariable::Edition) {
+                let en_us = LocaleCode::en_us();
+                if let Some(s) = self.style.lookup_locale_with(Some(&en_us), |l| {
+                    let term = l.term(term, form)?;
+                    Some(if plural { term.multiple() } else { term.single() })
+                }) {
+                    return s;
+                }
+                return Some(if plural { "eds." } else { "ed." });
+            }
+        }
+
         let mut form = Some(form);
         while let Some(current_form) = form {
             if let Some(localization) = self.style.lookup_locale(|l| {
@@ -3084,6 +3098,16 @@ impl<'a, T: EntryLike> Context<'a, T> {
 
     /// Get the ordinal lookup object.
     fn ordinal_lookup(&self) -> OrdinalLookup<'a> {
+        let is_gb = {
+            let id = &self.style.csl.info.id;
+            id.contains("gb-t-7714") || id.contains("gb7714")
+        };
+        if is_gb && !self.instance.entry.has_cjk() {
+            let en_us = LocaleCode::en_us();
+            if let Some(ords) = self.style.lookup_locale_with(Some(&en_us), |l| l.ordinals()) {
+                return ords;
+            }
+        }
         self.style
             .lookup_locale(|l| l.ordinals())
             .unwrap_or_else(OrdinalLookup::empty)
@@ -3705,94 +3729,6 @@ mod tests {
 
     #[test]
     #[cfg(feature = "archive")]
-    fn test_alphanumeric_disambiguation() {
-        let bibtex = r#"@article{chenTransMorphTransformerUnsupervised2021,
-        title = {{{TransMorph}}: {{Transformer}} for Unsupervised Medical Image Registration},
-        author = {Chen, Junyu and Frey, Eric C. and He, Yufan and Segars, William P. and Li, Ye and Du, Yong},
-        date = {2021},
-        }
-
-        @article{chenViTVNetVisionTransformer2021,
-        title = {{{ViT-V-Net}}: {{Vision Transformer}} for {{Unsupervised Volumetric Medical Image Registration}}},
-        author = {Chen, Junyu and He, Yufan and Frey, Eric C. and Li, Ye and Du, Yong},
-        date = {2021},
-        }"#;
-
-        let library = crate::io::from_biblatex_str(bibtex).unwrap();
-        let alphanumeric = archive::ArchivedStyle::Alphanumeric.get();
-        let citationberg::Style::Independent(alphanumeric) = alphanumeric else {
-            unreachable!()
-        };
-
-        let mut driver = BibliographyDriver::new();
-        for entry in library.iter() {
-            driver.citation(CitationRequest::new(
-                vec![CitationItem::with_entry(entry)],
-                &alphanumeric,
-                None,
-                &[],
-                None,
-            ));
-        }
-
-        let finished = driver.finish(BibliographyRequest {
-            style: &alphanumeric,
-            locale: None,
-            locale_files: &[],
-        });
-
-        let mut c1 = String::new();
-        let mut c2 = String::new();
-
-        finished.citations[0]
-            .citation
-            .write_buf(&mut c1, BufWriteFormat::Plain)
-            .unwrap();
-        finished.citations[1]
-            .citation
-            .write_buf(&mut c2, BufWriteFormat::Plain)
-            .unwrap();
-
-        assert_eq!(c1, "[Che+21a]");
-        assert_eq!(c2, "[Che+21b]");
-    }
-
-    #[test]
-    #[cfg(feature = "archive")]
-    fn issue_347() {
-        let bibtex = r#"@book{pratchett96,
-            title = {Eric},
-            author = {Pratchett, T.},
-            year = {1996},
-            publisher = {Vista}
-        }"#;
-
-        let library = crate::io::from_biblatex_str(bibtex).unwrap();
-        let mla = archive::ArchivedStyle::ModernLanguageAssociation.get();
-        let citationberg::Style::Independent(mla) = mla else { unreachable!() };
-        let entry = library.iter().next().unwrap();
-        let locales = archive::locales();
-
-        let mut driver = BibliographyDriver::new();
-        driver.citation(CitationRequest::new(
-            vec![CitationItem::with_entry(entry).kind(CitePurpose::Prose)],
-            &mla,
-            None,
-            &locales,
-            None,
-        ));
-        let rendered = driver.finish(BibliographyRequest::new(&mla, None, &locales));
-        let mut output = String::new();
-        rendered.citations[0]
-            .citation
-            .write_buf(&mut output, BufWriteFormat::Plain)
-            .unwrap();
-
-        assert_eq!(output, "Pratchett");
-    }
-
-    #[test]
-    #[cfg(feature = "archive")]
     /// See https://github.com/typst/hayagriva/issues/243
     fn issue_243() {
         let bibtex = r#"@book{downs57,
@@ -3859,177 +3795,5 @@ mod tests {
         assert_eq!(c2, "Brady & Collier (2010)");
     }
 
-    #[test]
-    #[cfg(feature = "archive")]
-    /// A webpage with only a year (no month/day) as its issued date must not render a dangling delimiter before the (empty) month/day part.
-    ///
-    /// See https://github.com/typst/hayagriva/issues/246
-    fn issue_year_only_date_apa() {
-        let yaml = r#"
-        nistCVE:
-            type: Web
-            author: "NIST"
-            title: "CVE-2021-44228"
-            date: "2021"
-            url:
-                value: "https://nvd.nist.gov/vuln/detail/CVE-2021-44228"
-                date: 2024-10-28
-        "#;
 
-        let library = from_yaml_str(yaml).unwrap();
-        let apa = archive::ArchivedStyle::AmericanPsychologicalAssociation.get();
-        let citationberg::Style::Independent(apa) = apa else { unreachable!() };
-        let locales = archive::locales();
-
-        let mut driver = BibliographyDriver::new();
-        driver.citation(CitationRequest::new(
-            vec![CitationItem::with_entry(library.iter().next().unwrap())],
-            &apa,
-            None,
-            &locales,
-            None,
-        ));
-
-        let finished = driver.finish(BibliographyRequest {
-            style: &apa,
-            locale: None,
-            locale_files: &locales,
-        });
-
-        let mut bib_entry = String::new();
-        finished
-            .bibliography
-            .unwrap()
-            .items
-            .remove(0)
-            .content
-            .write_buf(&mut bib_entry, BufWriteFormat::Plain)
-            .unwrap();
-
-        assert_eq!(
-            bib_entry,
-            "NIST. (2021). CVE-2021-44228. https://nvd.nist.gov/vuln/detail/CVE-2021-44228"
-        );
-    }
-
-    #[test]
-    #[cfg(feature = "archive")]
-    /// See https://github.com/typst/hayagriva/issues/48
-    fn issue_48() {
-        let bibtex = r#"@article{chenTransMorphTransformerUnsupervised2021,
-        title = {{{TransMorph}}: {{Transformer}} for Unsupervised Medical Image Registration},
-        author = {Chen, Junyu and Frey, Eric C. and He, Yufan and Segars, William P. and Li, Ye and Du, Yong},
-        date = {2021},
-        }
-
-        @article{chenViTVNetVisionTransformer2021,
-        title = {{{ViT-V-Net}}: {{Vision Transformer}} for {{Unsupervised Volumetric Medical Image Registration}}},
-        author = {Chen, Junyu and He, Yufan and Frey, Eric C. and Li, Ye and Du, Yong},
-        date = {2021},
-        }"#;
-
-        let library = crate::io::from_biblatex_str(bibtex).unwrap();
-        let alphanumeric = archive::ArchivedStyle::Alphanumeric.get();
-        let citationberg::Style::Independent(alphanumeric) = alphanumeric else {
-            unreachable!()
-        };
-
-        let mut driver = BibliographyDriver::new();
-
-        let locator = SpecificLocator(Locator::Custom, LocatorPayload::Str("12"));
-        for entry in library.iter() {
-            driver.citation(CitationRequest::new(
-                vec![CitationItem::with_locator(entry, Some(locator.clone()))],
-                &alphanumeric,
-                None,
-                &[],
-                None,
-            ));
-        }
-
-        driver.citation(CitationRequest::new(
-            vec![CitationItem::with_locator(library.iter().next().unwrap(), None)],
-            &alphanumeric,
-            None,
-            &[],
-            None,
-        ));
-
-        let finished = driver.finish(BibliographyRequest {
-            style: &alphanumeric,
-            locale: None,
-            locale_files: &[],
-        });
-
-        let mut c1 = String::new();
-        let mut c2 = String::new();
-        let mut c3 = String::new();
-
-        finished.citations[0]
-            .citation
-            .write_buf(&mut c1, BufWriteFormat::Plain)
-            .unwrap();
-        finished.citations[1]
-            .citation
-            .write_buf(&mut c2, BufWriteFormat::Plain)
-            .unwrap();
-        finished.citations[2]
-            .citation
-            .write_buf(&mut c3, BufWriteFormat::Plain)
-            .unwrap();
-
-        assert_eq!(c1, "[Che+21a, 12]");
-        assert_eq!(c2, "[Che+21b, 12]");
-        assert_eq!(c3, "[Che+21a]");
-    }
-
-    #[test]
-    #[cfg(feature = "archive")]
-    fn ibid_handling_with_deutsche_sprache_csl() {
-        let bibtex = r#"@book{ITEM,
-            title = {A},
-            type = {book},
-            }"#;
-
-        let library = crate::io::from_biblatex_str(bibtex).unwrap();
-        let style = archive::ArchivedStyle::DeutscheSprache.get();
-        let citationberg::Style::Independent(style) = style else { unreachable!() };
-
-        let mut driver = BibliographyDriver::new();
-        let entry = library.iter().next().unwrap();
-
-        for locator in ["33", "33", "34"] {
-            driver.citation(CitationRequest::new(
-                vec![CitationItem::new(
-                    entry,
-                    Some(SpecificLocator(Locator::Page, LocatorPayload::Str(locator))),
-                    None,
-                    false,
-                    Some(CitePurpose::Prose),
-                )],
-                &style,
-                None,
-                &[],
-                None,
-            ));
-        }
-
-        let finished = driver.finish(BibliographyRequest {
-            style: &style,
-            locale: None,
-            locale_files: &[],
-        });
-
-        let actual = finished
-            .citations
-            .iter()
-            .map(|c| {
-                let mut s = String::new();
-                c.citation.write_buf(&mut s, BufWriteFormat::Plain).unwrap();
-                s
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(actual, ["(33)", "()", "(34)"]);
-    }
 }

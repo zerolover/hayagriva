@@ -37,6 +37,7 @@ pub trait EntryLike {
     fn resolve_date_variable(&self, variable: DateVariable) -> Option<Cow<'_, Date>>;
     fn matches_entry_type(&self, kind: taxonomy::Kind) -> bool;
     fn is_english(&self) -> Option<bool>;
+    fn has_cjk(&self) -> bool;
     fn key(&self) -> Cow<'_, str>;
 }
 
@@ -93,6 +94,16 @@ impl<'a, T: EntryLike> InstanceContext<'a, T> {
         variable: StandardVariable,
     ) -> Option<Cow<'a, ChunkedString>> {
         match variable {
+            StandardVariable::CitationLabel => {
+                let mut label = self.entry.resolve_standard_variable(form, variable)?.to_string();
+                if let DisambiguateState::YearSuffix(s) =
+                    self.cite_props.speculative.disambiguation
+                {
+                    label.push_str(&letter(s));
+                }
+
+                Some(Cow::Owned(StringChunk::verbatim(label).into()))
+            }
             StandardVariable::YearSuffix => {
                 if let DisambiguateState::YearSuffix(s) =
                     self.cite_props.speculative.disambiguation
@@ -282,16 +293,40 @@ impl EntryLike for Entry {
                 .and_then(|e| e.title())
                 .map(|f| f.select(form))
                 .map(Cow::Borrowed),
-            StandardVariable::ContainerTitle => entry
-                .get_container()
-                .and_then(|e| e.title())
-                .map(|f| f.select(form))
-                .map(Cow::Borrowed),
-            StandardVariable::ContainerTitleShort => entry
-                .get_container()
-                .and_then(|e| e.title())
-                .map(|f| f.select(LongShortForm::Short))
-                .map(Cow::Borrowed),
+            StandardVariable::ContainerTitle => {
+                if let Some(container) = entry.get_container()
+                    && let Some(title) = container.title()
+                    && title
+                        .select(form)
+                        .to_string()
+                        .to_ascii_lowercase()
+                        .contains("arxiv")
+                {
+                    Some(Cow::Owned(StringChunk::verbatim("arXiv").into()))
+                } else {
+                    entry.get_container()
+                        .and_then(|e| e.title())
+                        .map(|f| f.select(form))
+                        .map(Cow::Borrowed)
+                }
+            }
+            StandardVariable::ContainerTitleShort => {
+                if let Some(container) = entry.get_container()
+                    && let Some(title) = container.title()
+                    && title
+                        .select(LongShortForm::Short)
+                        .to_string()
+                        .to_ascii_lowercase()
+                        .contains("arxiv")
+                {
+                    Some(Cow::Owned(StringChunk::verbatim("arXiv").into()))
+                } else {
+                    entry.get_container()
+                        .and_then(|e| e.title())
+                        .map(|f| f.select(LongShortForm::Short))
+                        .map(Cow::Borrowed)
+                }
+            }
             StandardVariable::Dimensions => entry
                 .runtime()
                 .map(|r| Cow::Owned(StringChunk::normal(r.to_string()).into())),
@@ -403,10 +438,26 @@ impl EntryLike for Entry {
                     (Article > ("p":Proceedings))
                 );
 
-                self.bound_select(&selector, "p")
-                    .and_then(Entry::title)
-                    .map(|f| f.select(form))
-                    .map(Cow::Borrowed)
+                let volume_parent = self.bound_select(&selector, "p");
+                let container = self.get_container();
+
+                let duplicate_container_title = match (volume_parent, container) {
+                    (Some(v), Some(c)) if std::ptr::eq(v, c) => true,
+                    (Some(v), Some(c)) => {
+                        v.title().map(|t| t.select(form).to_string())
+                            == c.title().map(|t| t.select(form).to_string())
+                    }
+                    _ => false,
+                };
+
+                if duplicate_container_title {
+                    None
+                } else {
+                    volume_parent
+                        .and_then(Entry::title)
+                        .map(|f| f.select(form))
+                        .map(Cow::Borrowed)
+                }
             }
             StandardVariable::YearSuffix => panic!("processor must resolve this"),
         }
@@ -692,7 +743,7 @@ impl EntryLike for Entry {
                     .matches(self)
                     && !(is_blogpost || is_post)
             }
-            Kind::Dataset => false,
+            Kind::Dataset => self.entry_type() == &EntryType::Repository,
             Kind::Figure | Kind::Graphic | Kind::Map => {
                 let is_figure = select!(Artwork > Article).matches(self);
                 if kind == Kind::Figure {
@@ -708,7 +759,7 @@ impl EntryLike for Entry {
             Kind::Pamphlet => false,
             Kind::PersonalCommunication => false,
             Kind::Review | Kind::ReviewBook => false,
-            Kind::Software => self.entry_type() == &EntryType::Repository,
+            Kind::Software => false,
             Kind::Document => self.entry_type() == &EntryType::Misc,
         }
     }
@@ -716,7 +767,57 @@ impl EntryLike for Entry {
     fn is_english(&self) -> Option<bool> {
         self.language().map(|l| l.language.as_str() == "en")
     }
+
+    fn has_cjk(&self) -> bool {
+        if let Some(l) = self.language() {
+            let s = l.language.as_str();
+            if s == "zh" || s == "chi" || s == "zho" {
+                return true;
+            }
+        }
+
+        entry_like_has_cjk(self)
+    }
 }
+
+fn entry_like_has_cjk<E: EntryLike + ?Sized>(entry: &E) -> bool {
+    for name_var in [
+        NameVariable::Author,
+        NameVariable::Editor,
+        NameVariable::Translator,
+        NameVariable::Composer,
+        NameVariable::Director,
+        NameVariable::Illustrator,
+        NameVariable::OriginalAuthor,
+        NameVariable::ContainerAuthor,
+        NameVariable::CollectionEditor,
+        NameVariable::EditorialDirector,
+        NameVariable::ReviewedAuthor,
+    ] {
+        for person in entry.resolve_name_variable(name_var) {
+            if person.is_cjk() {
+                return true;
+            }
+        }
+    }
+
+    for std_var in [
+        StandardVariable::Title,
+        StandardVariable::ContainerTitle,
+        StandardVariable::CollectionTitle,
+        StandardVariable::Publisher,
+        StandardVariable::PublisherPlace,
+    ] {
+        if let Some(s) = entry.resolve_standard_variable(LongShortForm::Long, std_var) {
+            if s.0.iter().any(|chunk| chunk.value.chars().any(crate::lang::is_cjk)) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 
 #[cfg(feature = "csl-json")]
 fn resolve_csl_json_standard_variable(
@@ -915,6 +1016,16 @@ impl EntryLike for citationberg::json::Item {
             .get("language")
             .and_then(|l| l.to_str())
             .map(|l| l.starts_with("en"))
+    }
+
+    fn has_cjk(&self) -> bool {
+        if let Some(l) = self.0.get("language").and_then(|l| l.to_str()) {
+            if l.starts_with("zh") || l == "chi" || l == "zho" {
+                return true;
+            }
+        }
+
+        entry_like_has_cjk(self)
     }
 
     fn key(&self) -> Cow<'_, str> {

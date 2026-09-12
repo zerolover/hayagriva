@@ -1054,3 +1054,62 @@ fn no_author() {
         .unwrap();
     assert_eq!(buf, "(Definition and Objectives of Systems Development, 2016)");
 }
+
+#[test]
+fn test_volume_and_edition_rendering() {
+    let lib = from_biblatex_str(r#"
+@book{goodfellow,
+  author = {Goodfellow, Ian and Bengio, Yoshua and Courville, Aaron},
+  title = {Deep learning},
+  volume = {1},
+  edition = {2},
+  publisher = {MIT Press},
+  date = {2016},
+}
+
+@book{chinese_book,
+  author = {张三 and 李四 and 王五},
+  title = {机器学习导论},
+  volume = {1},
+  edition = {2},
+  publisher = {清华大学出版社},
+  date = {2020},
+}
+"#).unwrap();
+    let locales = locales();
+    for style_name in [
+        "gb-7714-2025-numeric",
+        "gb-7714-2025-author-date",
+    ] {
+        let style = ArchivedStyle::by_name(style_name).unwrap().get();
+        let Style::Independent(style) = style else { panic!() };
+
+        let entry_en = lib.get("goodfellow").unwrap();
+        let mut driver: BibliographyDriver<'_, Entry> = BibliographyDriver::new();
+        driver.citation(CitationRequest::new(
+            vec![CitationItem::new(entry_en, None, None, false, None)],
+            &style,
+            None,
+            &locales,
+            Some(1),
+        ));
+        let rendered = driver.finish(BibliographyRequest::new(&style, None, &locales));
+        let mut bib_en = String::new();
+        rendered.bibliography.unwrap().items[0].content.write_buf(&mut bib_en, hayagriva::BufWriteFormat::Plain).unwrap();
+        assert!(bib_en.contains("Deep learning: Vol. 1[M]. 2nd ed."), "Failed on {}: {}", style_name, bib_en);
+
+        let entry_zh = lib.get("chinese_book").unwrap();
+        let mut driver: BibliographyDriver<'_, Entry> = BibliographyDriver::new();
+        driver.citation(CitationRequest::new(
+            vec![CitationItem::new(entry_zh, None, None, false, None)],
+            &style,
+            None,
+            &locales,
+            Some(1),
+        ));
+        let rendered = driver.finish(BibliographyRequest::new(&style, None, &locales));
+        let mut bib_zh = String::new();
+        rendered.bibliography.unwrap().items[0].content.write_buf(&mut bib_zh, hayagriva::BufWriteFormat::Plain).unwrap();
+        assert!(bib_zh.contains("机器学习导论: 卷1[M]"), "Failed on {}: {}", style_name, bib_zh);
+    }
+}
