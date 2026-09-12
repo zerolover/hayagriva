@@ -185,16 +185,7 @@ impl ArchivedStyle {
 
     /// Retrieve the style.
     pub fn get(self) -> Style {
-        let mut style = match self {
-            Self::Gb77142025AuthorDate | Self::Gb77142025Numeric => {
-                let bytes = decode_archive_bytes(self.bytes()).unwrap();
-                let mut val: ciborium::value::Value =
-                    ciborium::de::from_reader(bytes.as_slice()).unwrap();
-                patch_cbor_halfwidth(&mut val);
-                val.deserialized().unwrap()
-            }
-            _ => from_cbor(self.bytes()).unwrap(),
-        };
+        let mut style = from_cbor(self.bytes()).unwrap();
         patch_style(self, &mut style);
         style
     }
@@ -328,38 +319,6 @@ fn from_cbor<T: DeserializeOwned>(reader: &[u8]) -> Result<T, String> {
     let bytes = decode_archive_bytes(reader)?;
     ciborium::de::from_reader(bytes.as_slice())
         .map_err(|err| format!("failed to decode embedded archive entry: {err}"))
-}
-
-fn patch_cbor_halfwidth(v: &mut ciborium::value::Value) {
-    match v {
-        ciborium::value::Value::Text(s) => match s.as_str() {
-            "（" => *s = "(".to_string(),
-            "）" => *s = ")".to_string(),
-            "，" => *s = ", ".to_string(),
-            "：" => *s = ": ".to_string(),
-            "；" => *s = "; ".to_string(),
-            _ => {}
-        },
-        ciborium::value::Value::Array(arr) => {
-            for item in arr {
-                patch_cbor_halfwidth(item);
-            }
-        }
-        ciborium::value::Value::Map(map) => {
-            for (k, val) in map {
-                if let ciborium::value::Value::Text(k_str) = k {
-                    if k_str == "info" {
-                        continue;
-                    }
-                }
-                patch_cbor_halfwidth(val);
-            }
-        }
-        ciborium::value::Value::Tag(_, inner) => {
-            patch_cbor_halfwidth(inner);
-        }
-        _ => {}
-    }
 }
 
 fn patch_style(archived: ArchivedStyle, style: &mut Style) {
